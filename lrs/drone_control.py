@@ -2,7 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from geometry_msgs.msg import PoseStamped, Point, Quaternion
+from geometry_msgs.msg import PoseStamped, Point, Quaternion, Pose
 from std_msgs.msg import Header
 from mavros_msgs.msg import State
 from mavros_msgs.srv import CommandBool, SetMode, CommandTOL
@@ -13,6 +13,16 @@ class DroneControl(Node):
     def __init__(self):
         super().__init__('drone_control_node')
 
+        self.target_positions = [
+            Pose(position = Point(x=0.0,y=0.0,z=3.0,), orientation =  Quaternion(x=0.0,y=0.0,z=0.0,w=1.0,)),
+            Pose(position = Point(x=-2.0,y=0.0,z=3.0,), orientation =  Quaternion(x=0.0,y=0.0,z=0.0,w=1.0,)),
+            Pose(position = Point(x=-2.0,y=0.0,z=1.0,), orientation =  Quaternion(x=0.0,y=0.0,z=0.0,w=1.0,)),
+            Pose(position = Point(x=0.0,y=0.0,z=1.0,), orientation =  Quaternion(x=0.0,y=0.0,z=0.0,w=1.0,)),
+            Pose(position = Point(x=0.0,y=0.0,z=3.0,), orientation =  Quaternion(x=0.0,y=0.0,z=0.0,w=1.0,)),
+        ]
+
+        self.index_of_target_position = 0
+
         self.get_logger().info('Program started')
 
         self.state_sub = self.create_subscription(State, 'mavros/state', self._state_cb, 10)
@@ -20,6 +30,7 @@ class DroneControl(Node):
         self.set_mode_client = self.create_client(SetMode, 'mavros/set_mode')
         self.arming_client = self.create_client(CommandBool, 'mavros/cmd/arming')
         self.takeoff_client = self.create_client(CommandTOL, 'mavros/cmd/takeoff')
+        self.land_client = self.create_client(CommandTOL, 'mavros/cmd/land')
 
         self.position_target_pub = self.create_publisher(PoseStamped, 'mavros/setpoint_position/local', 10)
 
@@ -27,24 +38,9 @@ class DroneControl(Node):
         qos_profile.reliability = ReliabilityPolicy.BEST_EFFORT
         self.local_pos_sub = self.create_subscription(PoseStamped, '/mavros/local_position/pose', self._local_pos_cb, qos_profile=qos_profile)
 
-        # self.current_state = None
-        # # Wait for MAVROS SITL connection
-        # while self.current_state is None or not self.current_state.connected:
-        #     self.get_logger().info('Waiting for MAVROS SITL connection...')
-        #     time.sleep(0.1)
-        #
-        # if self.current_state.mode != "GUIDED":
-        #     self._set_mode()
-        
-        # if not self.current_state.armed:
-        #     self._arming_dron()
-        #     self._takeoff_dron()
-        
         self._set_mode()
         self._arming_dron()
         self._takeoff_dron()
-
-        self._publish_position_target()
 
 
         
@@ -57,17 +53,34 @@ class DroneControl(Node):
         x = current_local_pos.pose.position.x
         y = current_local_pos.pose.position.y
         z = current_local_pos.pose.position.z
+        
+        
+        target_position = self.target_positions[self.index_of_target_position]
+
+        is_drone_at_target_position = self._check_position(x, y, z, target_position)
+
+        if is_drone_at_target_position:
+            if self.index_of_target_position + 1 < len(self.target_positions):
+                self.index_of_target_position += 1
+                self._publish_position_target(self.target_positions[self.index_of_target_position])
+                is_drone_at_target_position = False
+            else:
+                self._land_dron()
+        
+
+                
+
         # self.get_logger().info(f'Current Local Position: \n x: {x}, \n y:{y}, \n z:{z}')
 
-    def _check_position(self, current_x, current_y, current_z):
-        destination_x, destination_y, destination_z = ...  # your destination coordinates
-        threshold = 0.2  # for example, adjust as needed
+    def _check_position(self, current_x, current_y, current_z, target_position):
+        target_x, target_y, target_z = target_position.position.x, target_position.position.y, target_position.position.z 
+        threshold = 0.2 
 
-        if self._euclidean_distance(current_x, current_y, current_z, destination_x, destination_y, destination_z) < threshold:
-            print("We are close enough to the destination!")
+        if self._euclidean_distance(current_x, current_y, current_z, target_x, target_y, target_z) < threshold:
+            print("We are close enough to the target!")
             return True
         else:
-            print("Still on the way to the destination.")
+            print("Still on the way to the target.")
             return False
 
     def _euclidean_distance(self, x1, y1, z1, x2, y2, z2):
@@ -121,7 +134,7 @@ class DroneControl(Node):
         takeoff_req = CommandTOL.Request()
         takeoff_req.min_pitch = 0.0
         takeoff_req.yaw = 90.0
-        takeoff_req.altitude = 2.0
+        takeoff_req.altitude = 3.0
 
         # Service call
         response = self.takeoff_client.call_async(takeoff_req)
@@ -131,35 +144,37 @@ class DroneControl(Node):
             self.get_logger().info('Successfully initiated takeoff.')
         else:
             self.get_logger().error('Failed to initiate takeoff.')
+    
+    def _land_dron(self):
+        self.get_logger().info('Land...')
 
-    def _publish_position_target(self):
+        # Wait for the takeoff service to be available
+        while not self.land_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Waiting for land service...')
+
+        land_req = CommandTOL.Request()
+        land_req.min_pitch = 0.0
+        land_req.yaw = 90.0
+        land_req.altitude = 0.0
+
+        # Service call
+        response = self.land_client.call_async(land_req)
+
+        rclpy.spin_until_future_complete(self, response)
+        if response.result().success:
+            self.get_logger().info('Successfully initiated land.')
+        else:
+            self.get_logger().error('Failed to initiate land.')
+
+    def _publish_position_target(self, position):
         # self._set_mode()
-        self.get_logger().info('Sending dron to pos...')
-        # pose_msg = PoseStamped()
-        # # Fill out the message fields based on a default pose
-        # pose_msg.header.stamp = self.get_clock().now().to_msg()
-        # pose_msg.header.frame_id = ""  # You can specify a frame_id if necessary
-        # pose_msg.pose.position.x = 0.0
-        # pose_msg.pose.position.y = 0.0
-        # pose_msg.pose.position.z = 3.0
-        # pose_msg.pose.orientation.x = 0.0
-        # pose_msg.pose.orientation.y = 0.0
-        # pose_msg.pose.orientation.z = 0.0
-        # pose_msg.pose.orientation.w = 1.0  # This represents no rotation
+   
+        self.get_logger().info(f'Current Local Position: \n x: {position.position.x}, \n y: {position.position.y}, \n z: {position.position.z}')
 
         move_to_pose = PoseStamped()
         move_to_pose.header=Header(stamp=self.get_clock().now().to_msg(), frame_id='base')
-        move_to_pose.pose.position=Point(
-                        x=0.0,
-                        y=0.0,
-                        z=3.0,
-                    )
-        move_to_pose.pose.orientation=Quaternion(
-                        x=0.0,
-                        y=0.0,
-                        z=0.0,
-                        w=1.0,
-                    )
+        move_to_pose.pose = position
+
 
         # Publish the PoseStamped message
         self.position_target_pub.publish(move_to_pose)
