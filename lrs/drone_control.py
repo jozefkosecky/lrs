@@ -14,11 +14,11 @@ class DroneControl(Node):
         super().__init__('drone_control_node')
 
         self.target_positions = [
-            Pose(position = Point(x=0.0,y=0.0,z=3.0,), orientation =  Quaternion(x=0.0,y=0.0,z=0.0,w=1.0,)),
-            Pose(position = Point(x=-2.0,y=0.0,z=3.0,), orientation =  Quaternion(x=0.0,y=0.0,z=0.0,w=1.0,)),
-            Pose(position = Point(x=-2.0,y=0.0,z=1.0,), orientation =  Quaternion(x=0.0,y=0.0,z=0.0,w=1.0,)),
-            Pose(position = Point(x=0.0,y=0.0,z=1.0,), orientation =  Quaternion(x=0.0,y=0.0,z=0.0,w=1.0,)),
-            Pose(position = Point(x=0.0,y=0.0,z=3.0,), orientation =  Quaternion(x=0.0,y=0.0,z=0.0,w=1.0,)),
+            Pose(position = Point(x=0.0,y=0.0,z=3.0,), orientation =  self._quaternion_from_angle_degrees(0)),
+            Pose(position = Point(x=-2.0,y=0.0,z=3.0,), orientation =  self._quaternion_from_angle_degrees(180)),
+            Pose(position = Point(x=-2.0,y=0.0,z=1.0,), orientation =  self._quaternion_from_angle_degrees(270)),
+            Pose(position = Point(x=0.0,y=0.0,z=1.0,), orientation =  self._quaternion_from_angle_degrees(45)),
+            Pose(position = Point(x=0.0,y=0.0,z=3.0,), orientation =  self._quaternion_from_angle_degrees(0)),
         ]
 
         self.index_of_target_position = 0
@@ -62,6 +62,7 @@ class DroneControl(Node):
         if is_drone_at_target_position:
             if self.index_of_target_position + 1 < len(self.target_positions):
                 self.index_of_target_position += 1
+                input("Pre pokracovanie na dalsiu poziciu stlac ENTER!")
                 self._publish_position_target(self.target_positions[self.index_of_target_position])
                 is_drone_at_target_position = False
             else:
@@ -85,6 +86,13 @@ class DroneControl(Node):
 
     def _euclidean_distance(self, x1, y1, z1, x2, y2, z2):
         return math.sqrt((x2 - x1)**2 + (y2 - y1)**2 + (z2 - z1)**2)
+    
+    def _quaternion_from_angle_degrees(self, angle_degrees):
+        angle_radians = math.radians(angle_degrees) / 2.0
+        w = math.cos(angle_radians)
+        z = math.sin(angle_radians)
+
+        return Quaternion(x=0.0,y=0.0,z=float(z), w=float(w),)
 
     def _set_mode(self):
         self.get_logger().info('Change mode to GUIDED.')
