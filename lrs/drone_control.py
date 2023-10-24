@@ -15,6 +15,7 @@ import bisect
 import numpy as np
 import threading
 from rclpy.executors import SingleThreadedExecutor
+from mavros_msgs.msg import PositionTarget
 
 
 class DroneControl(Node):
@@ -28,6 +29,14 @@ class DroneControl(Node):
         self.precision = self.precision_hard
         self.should_land = False
         self.running = True
+        self.end_program = False
+
+        self.is_perform_land_or_takeoff = True
+
+        self.is_performing_task = False
+
+
+        self.current_local_pos = Point(x = 0.0, y = 0.0, z = 0.0)
 
         self.global_start_pos_of_dron = (220*self.pixels_distance, 285*self.pixels_distance)
 
@@ -38,12 +47,17 @@ class DroneControl(Node):
         self.maps_altitude = np.array([25, 75, 80, 100, 125, 150, 175, 180, 200, 225])
 
         self.target_positions = [
-            Mission(x = 180*self.pixels_distance, y = 55*self.pixels_distance, z = 2.00, is_precision_hard = False, task = None),
-            Mission(x = 90*self.pixels_distance, y = 55*self.pixels_distance, z = 2.25, is_precision_hard = True, task = None),
-            Mission(x = 90*self.pixels_distance, y = 195*self.pixels_distance, z = 2.25, is_precision_hard = False, task = None),
-            Mission(x = 230*self.pixels_distance, y = 200*self.pixels_distance, z = 2.00, is_precision_hard = False, task = None),
-            Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, task = None),
+            Mission(x = 180*self.pixels_distance, y = 55*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = []),
+            Mission(x = 90*self.pixels_distance, y = 55*self.pixels_distance, z = 2.25, is_precision_hard = True, tasks = [Task.LAND, Task.TAKEOFF]),
+            Mission(x = 90*self.pixels_distance, y = 195*self.pixels_distance, z = 2.25, is_precision_hard = False, tasks = []),
+            Mission(x = 230*self.pixels_distance, y = 200*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = []),
+            Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = []),
         ]
+
+        # self.target_positions = [
+        #     Mission(x = 220*self.pixels_distance, y = 260*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = [Task.LAND, Task.TAKEOFF]),
+        #     Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = []),
+        # ]
 
         self.trajectory = self._get_trajectory((0.0,0.0), self.target_positions[0])
 
@@ -61,15 +75,65 @@ class DroneControl(Node):
         self.land_client = self.create_client(CommandTOL, 'mavros/cmd/land')
 
         self.position_target_pub = self.create_publisher(PoseStamped, 'mavros/setpoint_position/local', 10)
+        self.land_target_pub = self.create_publisher(PoseStamped, 'mavros/landing_target/pose', 10)
+        self.position_raw_target_pub = self.create_publisher(PositionTarget, '/mavros/setpoint_raw/local', 10)
 
         qos_profile = QoSProfile(depth=1)
         qos_profile.reliability = ReliabilityPolicy.BEST_EFFORT
         self.local_pos_sub = self.create_subscription(PoseStamped, '/mavros/local_position/pose', self._local_pos_cb, qos_profile=qos_profile)
 
-        self._set_mode()
+        
         self._takeoff_dron()
 
 
+    def main_loop(self):
+        x = self.current_local_pos.x
+        y = self.current_local_pos.y
+        z = self.current_local_pos.z
+
+        is_drone_at_target_position, distance = self._check_position(x, y, z, self.target_position, self.precision)
+
+
+        if not is_drone_at_target_position:
+            if distance < 0.5 and not self.is_performing_task:
+            # if distance < 0.5:
+                self._publish_position_target(self.trajectory[self.index_of_trajectory_target_position])
+            return
+        
+        self.is_performing_task = False
+        if self.index_of_trajectory_target_position  == len(self.trajectory) - 1 and self.target_positions[self.index_of_target_position].tasks:
+            self.is_performing_task = True
+            task = self.target_positions[self.index_of_target_position].tasks[0]
+            self._perform_task(task, x, y)
+            self.target_positions[self.index_of_target_position].tasks.pop(0)
+            return
+
+        if self.index_of_trajectory_target_position + 1 < len(self.trajectory):
+            # input("Pre pokracovanie na dalsiu poziciu stlac ENTER!")
+            self.index_of_trajectory_target_position += 1
+            self._publish_position_target(self.trajectory[self.index_of_trajectory_target_position])
+
+            if self.index_of_trajectory_target_position == len(self.trajectory) - 1:
+                self.precision = self.precision_hard if self.target_positions[self.index_of_target_position].is_precision_hard else self.precision_soft
+                
+
+        elif self.index_of_target_position + 1 < len(self.target_positions):
+            # input("Pre pokracovanie na dalsiu poziciu stlac ENTER!")
+        
+            self.index_of_target_position += 1
+            self.trajectory = self._get_trajectory((x,y), self.target_positions[self.index_of_target_position])
+
+            self.index_of_trajectory_target_position = 0
+            self._publish_position_target(self.trajectory[self.index_of_trajectory_target_position])
+
+            self.precision = self.precision_hard
+
+        else:
+            # self._perform_task()
+            self._land_dron()
+            self.end_program = True
+
+        self.target_position = self.trajectory[self.index_of_trajectory_target_position]
     
     def print_msg_to_console(self, msg):
         print(msg)
@@ -82,60 +146,27 @@ class DroneControl(Node):
 
     def _local_pos_cb(self, msg: PoseStamped):
         current_local_pos = msg
-        x = current_local_pos.pose.position.x
-        y = current_local_pos.pose.position.y
-        z = current_local_pos.pose.position.z
-
+        self.current_local_pos = current_local_pos.pose.position
        
         # self.print_msg_to_console(f'Current Local Position: \n x: {x}, \n y:{y}, \n z:{z}')
         # target_x, target_y, target_z = self.target_position.position.x, self.target_position.position.y, self.target_position.position.z 
         # self.print_msg_to_console(f'Destination \n x: {target_x}, \n y:{target_y}, \n z:{target_z}')
 
-        is_drone_at_target_position, distance = self._check_position(x, y, z, self.target_position, self.precision)
-
-
-        if not is_drone_at_target_position:
-            if distance < 0.5:
-                self._publish_position_target(self.trajectory[self.index_of_trajectory_target_position])
-            return
+    def _perform_task(self, task, x_pos, y_pos):
         
-        self.start_pos_was_reached = True
-
-        if self.index_of_trajectory_target_position + 1 < len(self.trajectory):
-            # input("Pre pokracovanie na dalsiu poziciu stlac ENTER!")
-            self.index_of_trajectory_target_position += 1
-            self._publish_position_target(self.trajectory[self.index_of_trajectory_target_position])
-
-            if self.index_of_trajectory_target_position != len(self.trajectory) - 1:
-                self.precision = self.precision_hard
-            else:
-                self.precision = self.precision_hard if self.target_positions[self.index_of_target_position].is_precision_hard else self.precision_soft
-
-        elif self.index_of_target_position + 1 < len(self.target_positions):
-            # input("Pre pokracovanie na dalsiu poziciu stlac ENTER!")
-            self._perform_task()
-            self.index_of_target_position += 1
-            self.trajectory = self._get_trajectory((x,y), self.target_positions[self.index_of_target_position])
-
-            self.index_of_trajectory_target_position = 0
-            self._publish_position_target(self.trajectory[self.index_of_trajectory_target_position])
-
-        else:
-            self._land_dron()
-            self.should_land = True
-
-        self.target_position = self.trajectory[self.index_of_trajectory_target_position]
-
-    def _perform_task(self):
-        task = self.target_positions[self.index_of_target_position].task
         if task is None:
             return
         
-        if task == Task.LANDTAKEOFF:
-            self._land_dron()
-            self._takeoff_dron()
+        if task == Task.LAND:
+            self.target_position = Pose(position = Point(x=x_pos,y=y_pos,z=0.0,), orientation =  self._quaternion_from_angle_degrees(0))
+            self._publish_position_target(self.target_position)
+            # self._land_dron()
+        elif task == Task.TAKEOFF:
+            # time.sleep(5)
+            self.target_position = Pose(position = Point(x=x_pos,y=y_pos,z=2.0,), orientation =  self._quaternion_from_angle_degrees(0))
+            self._publish_position_target(self.target_position)  
+            # self._takeoff_dron()
         
-
 
     def _get_trajectory(self, start_pos, target_pos):
         x_in_pixels = int(target_pos.x / self.pixels_distance)
@@ -256,6 +287,7 @@ class DroneControl(Node):
                 self.print_msg_to_console('Failed to arm the drone.')
 
     def _takeoff_dron(self):
+        self._set_mode()
         self._arming_dron()
         self.print_msg_to_console('Taking off...')
 
@@ -310,17 +342,43 @@ class DroneControl(Node):
         self.position_target_pub.publish(move_to_pose)
         self.print_msg_to_console('PoseStamped message published!')
 
+    def _publish_land_target(self, position):
+        # self._set_mode()
+        self.print_msg_to_console(f'Current Local Position: \n x: {position.position.x}, \n y: {position.position.y}, \n z: {position.position.z}')
+
+        move_to_pose = PoseStamped()
+        move_to_pose.header=Header(stamp=self.get_clock().now().to_msg(), frame_id='base')
+        move_to_pose.pose = position
+
+
+        # Publish the PoseStamped message
+        self.land_target_pub.publish(move_to_pose)
+        self.print_msg_to_console('PoseStamped message published!')
+
+    def _publish_raw_position_target(self, position, vx=0.5, vy=0.5, vz=0.5):
+        msg = PositionTarget()
+
+        msg.header = Header(stamp=self.get_clock().now().to_msg())
+        msg.coordinate_frame = 1
+        msg.type_mask = (64 | 128 | 256 | 512 | 1024 | 2048)
         
-    def periodic_check(self):
-        while rclpy.ok():
-            if self.should_land:
-                self._land_dron()
-                self.should_land = False
-            # time.sleep(0.5)  # sleep for half a second
-            rclpy.spin()
-    
-    def shutdown(self):
-        self.running = False 
+        msg.position.x = position.position.x
+        msg.position.y = position.position.y
+        msg.position.z = position.position.z
+
+        msg.velocity.x = vx
+        msg.velocity.y = vy
+        msg.velocity.z = vz
+
+        msg.acceleration_or_force.x = 0.0
+        msg.acceleration_or_force.y = 0.0
+        msg.acceleration_or_force.z = 0.0
+
+        msg.yaw = 0.0
+        msg.yaw_rate = 0.0
+
+        self.position_raw_target_pub.publish(msg)
+
 
 def main(args=None):
     rclpy.init(args=args)
@@ -331,14 +389,11 @@ def main(args=None):
     # thread = threading.Thread(target=drone_control.periodic_check)
     # thread.start()
 
-    try:
-        rclpy.spin(drone_control)
-    except KeyboardInterrupt:
-        pass  # Handle the interrupt if needed
+    while rclpy.ok() and not drone_control.end_program:
+        drone_control.main_loop()
+        rclpy.spin_once(drone_control)
 
     # Cleanup
-    drone_control.shutdown()
-    # thread.join()  # Wait for the periodic_check thread to exit
     drone_control.destroy_node()
     rclpy.shutdown()
 

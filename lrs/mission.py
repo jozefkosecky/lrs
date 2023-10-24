@@ -3,15 +3,20 @@
 from enum import Enum
 
 class Task(Enum):
-    LANDTAKEOFF = 1
+    TAKEOFF = 1
+    LAND = 2
+    
 
+
+from typing import List
 
 class Mission:
-    def __init__(self, x: float, y: float, z: float, is_precision_hard: bool, task: Task):
+    def __init__(self, x: float, y: float, z: float, is_precision_hard: bool, tasks: List[Task]):
         self.x = x
         self.y = y
         self.z = z
         self.is_precision_hard = is_precision_hard
-        self.task = task
+        self.tasks = tasks  # Note the change to 'tasks' to indicate multiple tasks
+
 
 
