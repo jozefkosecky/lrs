@@ -36,12 +36,12 @@ class DroneControl(Node):
         self.is_performing_task = False
 
 
-        self.current_local_pos = Pose(position = Point(x=0.0,y=0.0,z=0.0,), orientation =  self._quaternion_from_angle_degrees(0))
+        self.current_local_pos = Pose(position = Point(x=0.0,y=0.0,z=0.0,), orientation =  self._quaternion_from_angle_degrees(180))
 
-        self.global_start_pos_of_dron = (220*self.pixels_distance, 285*self.pixels_distance)
+        self.global_start_pos_of_dron = (13.6, 1.5)
 
         # Starting position. TakeOff.
-        self.target_position = Pose(position = Point(x=0.0,y=0.0,z=2.0,), orientation =  self._quaternion_from_angle_degrees(0))
+        self.target_position = Pose(position = Point(x=0.0,y=0.0,z=1.0,), orientation =  self._quaternion_from_angle_degrees(180))
         self.start_pos_was_reached = False
 
         self.maps_altitude = np.array([25, 75, 80, 100, 125, 150, 175, 180, 200, 225])
@@ -54,12 +54,25 @@ class DroneControl(Node):
         #     Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = []),
         # ]
 
+        # self.target_positions = [
+        #     # Mission(x = 220*self.pixels_distance, y = 260*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = [Task.YAW90, Task.YAW180, Task.LAND, Task.TAKEOFF, Task.YAW270, Task.YAW0]),
+        #     Mission(x = 13.6, y = 1.5, z = 1.0, is_precision_hard = False, tasks = []),
+        #     # Mission(x = 13.6, y = 5, z = 2.00, is_precision_hard = False, tasks = []),
+        #     Mission(x = 10, y = 1.5, z = 2.00, is_precision_hard = False, tasks = []),
+        #     # Mission(x = 13.6, y = 1.5, z = 1.0, is_precision_hard = False, tasks = []),
+        # ]
+
         self.target_positions = [
-            Mission(x = 220*self.pixels_distance, y = 260*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = [Task.YAW90, Task.YAW180, Task.LAND, Task.TAKEOFF, Task.YAW270, Task.YAW0]),
+            Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 1.00, is_precision_hard = False, tasks = []),
+            Mission(x = 8.65, y = 2.02, z = 1.0, is_precision_hard = False, tasks = []),
+            Mission(x = 4.84, y = 5.37, z = 2.0, is_precision_hard = True, tasks = []),
+            Mission(x = 2.08, y = 9.74, z = 1.75, is_precision_hard = False, tasks = []),
+            Mission(x = 8.84, y = 6.9, z = 2.00, is_precision_hard = False, tasks = []),
+            Mission(x = 2.81, y = 8.15, z = 1.5, is_precision_hard = False, tasks = []),
             Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = []),
         ]
 
-        self.trajectory = self._get_trajectory((0.0,0.0), self.target_positions[0])
+        self.trajectory = self._get_trajectory(self.global_start_pos_of_dron, self.target_positions[0])
 
 
         self.index_of_target_position = 0
@@ -122,12 +135,12 @@ class DroneControl(Node):
             # input("Pre pokracovanie na dalsiu poziciu stlac ENTER!")
         
             self.index_of_target_position += 1
-            self.trajectory = self._get_trajectory((x,y), self.target_positions[self.index_of_target_position])
+            self.trajectory = self._get_trajectory(self._get_global_pos((x,y)), self.target_positions[self.index_of_target_position])
 
             self.index_of_trajectory_target_position = 0
             self._publish_position_target(self.trajectory[self.index_of_trajectory_target_position])
 
-            self.precision = self.precision_soft
+            self.precision = self.precision_hard
 
         else:
             # self._perform_task()
@@ -201,9 +214,12 @@ class DroneControl(Node):
         
 
     def _get_trajectory(self, start_pos, target_pos):
-        x_in_pixels = int(target_pos.x / self.pixels_distance)
-        y_in_pixels = int(target_pos.y / self.pixels_distance)
-        z_in_pixels = int(target_pos.z / self.pixels_distance)
+        # x_in_pixels = int(target_pos.x / self.pixels_distance)
+        # y_in_pixels = int(target_pos.y / self.pixels_distance)
+        # z_in_pixels = int(target_pos.z / self.pixels_distance)
+
+        x_end = target_pos.x 
+        y_end = target_pos.y
 
         z_in_cm = target_pos.z * 100
         z = target_pos.z
@@ -211,7 +227,8 @@ class DroneControl(Node):
         z_altitude = self.find_nearest_bigger(z_in_cm)
 
         start_pos_in_pixels = self._get_global_pos_in_pixels(start_pos)
-        end_pos_in_pixels = (x_in_pixels, y_in_pixels)
+        # end_pos_in_pixels = (x_in_pixels, y_in_pixels)
+        end_pos_in_pixels = self._get_global_pos_in_pixels([x_end, y_end])
         map = self.maps[str(z_altitude)]
 
         path = self.bfs_algo.get_trajectory(start_pos_in_pixels, end_pos_in_pixels, map)
@@ -220,7 +237,7 @@ class DroneControl(Node):
         return [
             Pose(
                 position=Point(x=local_pos[0], y=local_pos[1], z=z),
-                orientation=self._quaternion_from_angle_degrees(0)
+                orientation=self._quaternion_from_angle_degrees(180)
             )
             for pos in path
             for local_pos in [self._get_local_pos_from_pixels(pos)]
@@ -232,17 +249,18 @@ class DroneControl(Node):
     def find_nearest_lower(self, value):
         return self.maps_altitude[self.maps_altitude < value].max() 
     
-    def _get_local_pos_from_pixels(self, global_pos):
-        x = global_pos[0] * self.pixels_distance
-        y = global_pos[1] * self.pixels_distance
-        return x - self.global_start_pos_of_dron[0], y - self.global_start_pos_of_dron[1]
+    def _get_local_pos_from_pixels(self, pixel_pos):
+        x = (pixel_pos[1] - 6)* self.pixels_distance
+        y = (260 - pixel_pos[0])* self.pixels_distance 
     
-    def _get_global_pos_in_pixels(self, local_pos):
-        x_global = local_pos[0] + self.global_start_pos_of_dron[0]
-        y_global = local_pos[1] + self.global_start_pos_of_dron[1]
+        return self.global_start_pos_of_dron[1] - y, x - self.global_start_pos_of_dron[0]
+    
+    def _get_global_pos_in_pixels(self, global_pos):
+        x_global = global_pos[0]
+        y_global = global_pos[1]
 
-        x_pixels = x_global / self.pixels_distance
-        y_pixels = y_global / self.pixels_distance
+        x_pixels = 260 - (y_global / self.pixels_distance)
+        y_pixels = (x_global / self.pixels_distance) + 6
 
         return int(x_pixels), int(y_pixels)
     
@@ -250,7 +268,7 @@ class DroneControl(Node):
         return global_pos[0] - self.global_start_pos_of_dron[0], global_pos[1] - self.global_start_pos_of_dron[1]
     
     def _get_global_pos(self, local_pos):
-        return local_pos[0] + self.global_start_pos_of_dron[0], local_pos[1] + self.global_start_pos_of_dron[1]
+        return  local_pos[1] + self.global_start_pos_of_dron[0], self.global_start_pos_of_dron[1] - (local_pos[0]) 
 
 
     def _check_position(self, current_local_pos, target_position, threshold = 0.2, orient_threshold=5):
@@ -349,7 +367,7 @@ class DroneControl(Node):
         takeoff_req = CommandTOL.Request()
         takeoff_req.min_pitch = 0.0
         takeoff_req.yaw = 90.0
-        takeoff_req.altitude = 2.0
+        takeoff_req.altitude = 1.0
 
         # Service call
         response = self.takeoff_client.call_async(takeoff_req)

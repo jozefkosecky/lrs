@@ -24,7 +24,7 @@ class BFS:
         pixel_data = self._replace_values_in_array(pixel_data)
         filtered_data = [sublist for sublist in pixel_data if sublist]
 
-        expanded_data = self._expand_obstacles(filtered_data, radius=12) 
+        expanded_data = self._expand_obstacles(filtered_data, radius=10) 
 
         directions = self._scan_grid(expanded_data, start_pos)
         path = self._find_path(start_pos, end_pos, directions)
