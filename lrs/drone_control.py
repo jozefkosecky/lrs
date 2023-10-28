@@ -36,7 +36,7 @@ class DroneControl(Node):
         self.is_performing_task = False
 
 
-        self.current_local_pos = Point(x = 0.0, y = 0.0, z = 0.0)
+        self.current_local_pos = Pose(position = Point(x=0.0,y=0.0,z=0.0,), orientation =  self._quaternion_from_angle_degrees(0))
 
         self.global_start_pos_of_dron = (220*self.pixels_distance, 285*self.pixels_distance)
 
@@ -46,18 +46,18 @@ class DroneControl(Node):
 
         self.maps_altitude = np.array([25, 75, 80, 100, 125, 150, 175, 180, 200, 225])
 
-        self.target_positions = [
-            Mission(x = 180*self.pixels_distance, y = 55*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = []),
-            Mission(x = 90*self.pixels_distance, y = 55*self.pixels_distance, z = 2.25, is_precision_hard = True, tasks = [Task.LAND, Task.TAKEOFF]),
-            Mission(x = 90*self.pixels_distance, y = 195*self.pixels_distance, z = 2.25, is_precision_hard = False, tasks = []),
-            Mission(x = 230*self.pixels_distance, y = 200*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = []),
-            Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = []),
-        ]
-
         # self.target_positions = [
-        #     Mission(x = 220*self.pixels_distance, y = 260*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = [Task.LAND, Task.TAKEOFF]),
+        #     Mission(x = 180*self.pixels_distance, y = 55*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = []),
+        #     Mission(x = 90*self.pixels_distance, y = 55*self.pixels_distance, z = 2.25, is_precision_hard = True, tasks = [Task.LAND, Task.TAKEOFF]),
+        #     Mission(x = 90*self.pixels_distance, y = 195*self.pixels_distance, z = 2.25, is_precision_hard = False, tasks = []),
+        #     Mission(x = 230*self.pixels_distance, y = 200*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = []),
         #     Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = []),
         # ]
+
+        self.target_positions = [
+            Mission(x = 220*self.pixels_distance, y = 260*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = [Task.YAW90, Task.YAW180, Task.LAND, Task.TAKEOFF, Task.YAW270, Task.YAW0]),
+            Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = []),
+        ]
 
         self.trajectory = self._get_trajectory((0.0,0.0), self.target_positions[0])
 
@@ -87,11 +87,12 @@ class DroneControl(Node):
 
 
     def main_loop(self):
-        x = self.current_local_pos.x
-        y = self.current_local_pos.y
-        z = self.current_local_pos.z
+        x = self.current_local_pos.position.x
+        y = self.current_local_pos.position.y
+        z = self.current_local_pos.position.z
+        orientation = self.current_local_pos.orientation
 
-        is_drone_at_target_position, distance = self._check_position(x, y, z, self.target_position, self.precision)
+        is_drone_at_target_position, distance = self._check_position(self.current_local_pos, self.target_position, self.precision)
 
 
         if not is_drone_at_target_position:
@@ -102,10 +103,10 @@ class DroneControl(Node):
         
         self.is_performing_task = False
         if self.index_of_trajectory_target_position  == len(self.trajectory) - 1 and self.target_positions[self.index_of_target_position].tasks:
+            self.precision = self.precision_soft
             self.is_performing_task = True
             task = self.target_positions[self.index_of_target_position].tasks[0]
-            self._perform_task(task, x, y)
-            self.target_positions[self.index_of_target_position].tasks.pop(0)
+            self._perform_task(task, x, y, z, orientation)
             return
 
         if self.index_of_trajectory_target_position + 1 < len(self.trajectory):
@@ -126,7 +127,7 @@ class DroneControl(Node):
             self.index_of_trajectory_target_position = 0
             self._publish_position_target(self.trajectory[self.index_of_trajectory_target_position])
 
-            self.precision = self.precision_hard
+            self.precision = self.precision_soft
 
         else:
             # self._perform_task()
@@ -146,26 +147,57 @@ class DroneControl(Node):
 
     def _local_pos_cb(self, msg: PoseStamped):
         current_local_pos = msg
-        self.current_local_pos = current_local_pos.pose.position
+        self.current_local_pos = current_local_pos.pose
        
         # self.print_msg_to_console(f'Current Local Position: \n x: {x}, \n y:{y}, \n z:{z}')
         # target_x, target_y, target_z = self.target_position.position.x, self.target_position.position.y, self.target_position.position.z 
         # self.print_msg_to_console(f'Destination \n x: {target_x}, \n y:{target_y}, \n z:{target_z}')
 
-    def _perform_task(self, task, x_pos, y_pos):
+    def _perform_task(self, task, x_pos, y_pos, z_pos, orientation):
         
         if task is None:
             return
         
         if task == Task.LAND:
-            self.target_position = Pose(position = Point(x=x_pos,y=y_pos,z=0.0,), orientation =  self._quaternion_from_angle_degrees(0))
-            self._publish_position_target(self.target_position)
-            # self._land_dron()
-        elif task == Task.TAKEOFF:
+            if not self.current_state.armed:
+                self.target_positions[self.index_of_target_position].tasks.pop(0)
+            elif z_pos >= 0.3:
+                self.target_position = Pose(position = Point(x=x_pos,y=y_pos,z=0.0,), orientation =  orientation)
+                # self._publish_position_target(self.target_position)
+                self._land_dron()
+                return
+            
+        if task == Task.TAKEOFF:
             # time.sleep(5)
-            self.target_position = Pose(position = Point(x=x_pos,y=y_pos,z=2.0,), orientation =  self._quaternion_from_angle_degrees(0))
-            self._publish_position_target(self.target_position)  
-            # self._takeoff_dron()
+            self.target_position = Pose(position = Point(x=x_pos,y=y_pos,z=2.0,), orientation =  orientation)
+            # self._publish_position_target(self.target_position)  
+            self._takeoff_dron()
+            self.target_positions[self.index_of_target_position].tasks.pop(0)
+            return
+        
+        if task == Task.YAW0:
+            self.target_position = Pose(position = Point(x=x_pos,y=y_pos,z=z_pos,), orientation =  self._quaternion_from_angle_degrees(0))
+            self._publish_position_target(self.target_position) 
+            self.target_positions[self.index_of_target_position].tasks.pop(0)
+            return
+        
+        if task == Task.YAW90:
+            self.target_position = Pose(position = Point(x=x_pos,y=y_pos,z=z_pos,), orientation =  self._quaternion_from_angle_degrees(-90))
+            self._publish_position_target(self.target_position) 
+            self.target_positions[self.index_of_target_position].tasks.pop(0)
+            return
+
+        if task == Task.YAW180:
+            self.target_position = Pose(position = Point(x=x_pos,y=y_pos,z=z_pos,), orientation =  self._quaternion_from_angle_degrees(-180))
+            self._publish_position_target(self.target_position) 
+            self.target_positions[self.index_of_target_position].tasks.pop(0)
+            return
+        
+        if task == Task.YAW270:
+            self.target_position = Pose(position = Point(x=x_pos,y=y_pos,z=z_pos,), orientation =  self._quaternion_from_angle_degrees(-270))
+            self._publish_position_target(self.target_position) 
+            self.target_positions[self.index_of_target_position].tasks.pop(0)
+            return
         
 
     def _get_trajectory(self, start_pos, target_pos):
@@ -221,17 +253,23 @@ class DroneControl(Node):
         return local_pos[0] + self.global_start_pos_of_dron[0], local_pos[1] + self.global_start_pos_of_dron[1]
 
 
-    def _check_position(self, current_x, current_y, current_z, target_position, threshold = 0.2):
-
+    def _check_position(self, current_local_pos, target_position, threshold = 0.2, orient_threshold=5):
         # if is_precision_hard:
         #     threshold = self.precision_hard
         # else:
         #     threshold = self.precision_soft
 
+        current_x, current_y, current_z = current_local_pos.position.x, current_local_pos.position.y, current_local_pos.position.z
         target_x, target_y, target_z = target_position.position.x, target_position.position.y, target_position.position.z 
         
         distance = self._euclidean_distance(current_x, current_y, current_z, target_x, target_y, target_z)
-        if distance < threshold:
+
+        orien_current = self.quaternion_to_angle(current_local_pos.orientation)
+        orien_target = self.quaternion_to_angle(target_position.orientation)
+
+        angle_difference = self.angle_difference(orien_current, orien_target)
+
+        if distance < threshold and angle_difference < orient_threshold:
             print("We are close enough to the target!")
             return True, distance
         else:
@@ -247,6 +285,19 @@ class DroneControl(Node):
         z = math.sin(angle_radians)
 
         return Quaternion(x=0.0,y=0.0,z=float(z), w=float(w),)
+    
+    def quaternion_to_angle(self, quat):
+        # Calculate the angle in radians
+        theta = 2 * math.acos(quat.w)
+        # Convert to degrees
+        angle_in_degrees = (theta * 180) / math.pi
+        return angle_in_degrees
+    
+    def angle_difference(self, angle1, angle2):
+        diff = abs(angle1 - angle2) % 360  # Use modulo to wrap around if over 360
+        if diff > 180:
+            diff = 360 - diff
+        return diff
 
     def _set_mode(self):
         self.print_msg_to_console('Change mode to GUIDED.')
@@ -342,42 +393,42 @@ class DroneControl(Node):
         self.position_target_pub.publish(move_to_pose)
         self.print_msg_to_console('PoseStamped message published!')
 
-    def _publish_land_target(self, position):
-        # self._set_mode()
-        self.print_msg_to_console(f'Current Local Position: \n x: {position.position.x}, \n y: {position.position.y}, \n z: {position.position.z}')
+    # def _publish_land_target(self, position):
+    #     # self._set_mode()
+    #     self.print_msg_to_console(f'Current Local Position: \n x: {position.position.x}, \n y: {position.position.y}, \n z: {position.position.z}')
 
-        move_to_pose = PoseStamped()
-        move_to_pose.header=Header(stamp=self.get_clock().now().to_msg(), frame_id='base')
-        move_to_pose.pose = position
+    #     move_to_pose = PoseStamped()
+    #     move_to_pose.header=Header(stamp=self.get_clock().now().to_msg(), frame_id='base')
+    #     move_to_pose.pose = position
 
 
-        # Publish the PoseStamped message
-        self.land_target_pub.publish(move_to_pose)
-        self.print_msg_to_console('PoseStamped message published!')
+    #     # Publish the PoseStamped message
+    #     self.land_target_pub.publish(move_to_pose)
+    #     self.print_msg_to_console('PoseStamped message published!')
 
-    def _publish_raw_position_target(self, position, vx=0.5, vy=0.5, vz=0.5):
-        msg = PositionTarget()
+    # def _publish_raw_position_target(self, position, vx=0.5, vy=0.5, vz=0.5):
+    #     msg = PositionTarget()
 
-        msg.header = Header(stamp=self.get_clock().now().to_msg())
-        msg.coordinate_frame = 1
-        msg.type_mask = (64 | 128 | 256 | 512 | 1024 | 2048)
+    #     msg.header = Header(stamp=self.get_clock().now().to_msg())
+    #     msg.coordinate_frame = 1
+    #     msg.type_mask = (64 | 128 | 256 | 512 | 1024 | 2048)
         
-        msg.position.x = position.position.x
-        msg.position.y = position.position.y
-        msg.position.z = position.position.z
+    #     msg.position.x = position.position.x
+    #     msg.position.y = position.position.y
+    #     msg.position.z = position.position.z
 
-        msg.velocity.x = vx
-        msg.velocity.y = vy
-        msg.velocity.z = vz
+    #     msg.velocity.x = vx
+    #     msg.velocity.y = vy
+    #     msg.velocity.z = vz
 
-        msg.acceleration_or_force.x = 0.0
-        msg.acceleration_or_force.y = 0.0
-        msg.acceleration_or_force.z = 0.0
+    #     msg.acceleration_or_force.x = 0.0
+    #     msg.acceleration_or_force.y = 0.0
+    #     msg.acceleration_or_force.z = 0.0
 
-        msg.yaw = 0.0
-        msg.yaw_rate = 0.0
+    #     msg.yaw = 0.0
+    #     msg.yaw_rate = 0.0
 
-        self.position_raw_target_pub.publish(msg)
+    #     self.position_raw_target_pub.publish(msg)
 
 
 def main(args=None):

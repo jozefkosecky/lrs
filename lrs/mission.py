@@ -5,6 +5,10 @@ from enum import Enum
 class Task(Enum):
     TAKEOFF = 1
     LAND = 2
+    YAW180 = 3
+    YAW90 = 4
+    YAW270 = 5
+    YAW0 = 6
     
 
 
