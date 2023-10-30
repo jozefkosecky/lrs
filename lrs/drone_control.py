@@ -41,10 +41,12 @@ class DroneControl(Node):
         self.global_start_pos_of_dron = (13.6, 1.5)
 
         # Starting position. TakeOff.
-        self.target_position = Pose(position = Point(x=0.0,y=0.0,z=1.0,), orientation =  self._quaternion_from_angle_degrees(180))
+        self.target_position = Pose(position = Point(x=0.0,y=0.0,z=2.0,), orientation =  self._quaternion_from_angle_degrees(180))
         self.start_pos_was_reached = False
 
         self.maps_altitude = np.array([25, 75, 80, 100, 125, 150, 175, 180, 200, 225])
+
+        # self.current_state = None
 
         # self.target_positions = [
         #     Mission(x = 180*self.pixels_distance, y = 55*self.pixels_distance, z = 2.00, is_precision_hard = False, tasks = []),
@@ -62,15 +64,29 @@ class DroneControl(Node):
         #     # Mission(x = 13.6, y = 1.5, z = 1.0, is_precision_hard = False, tasks = []),
         # ]
 
+        # self.target_positions = [
+        #     Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 1.00, is_precision_hard = False, tasks = []),
+        #     Mission(x = 8.65, y = 2.02, z = 1.0, is_precision_hard = False, tasks = []),
+        #     Mission(x = 4.84, y = 5.37, z = 2.0, is_precision_hard = True, tasks = []),
+        #     Mission(x = 2.08, y = 9.74, z = 1.75, is_precision_hard = False, tasks = []),
+        #     Mission(x = 8.84, y = 6.9, z = 2.00, is_precision_hard = False, tasks = []),
+        #     Mission(x = 2.81, y = 8.15, z = 1.5, is_precision_hard = False, tasks = []),
+        #     Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = []),
+        # ]
+
         self.target_positions = [
-            Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 1.00, is_precision_hard = False, tasks = []),
-            Mission(x = 8.65, y = 2.02, z = 1.0, is_precision_hard = False, tasks = []),
-            Mission(x = 4.84, y = 5.37, z = 2.0, is_precision_hard = True, tasks = []),
-            Mission(x = 2.08, y = 9.74, z = 1.75, is_precision_hard = False, tasks = []),
-            Mission(x = 8.84, y = 6.9, z = 2.00, is_precision_hard = False, tasks = []),
-            Mission(x = 2.81, y = 8.15, z = 1.5, is_precision_hard = False, tasks = []),
+            Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = []),
+            Mission(x = 13.6, y = 8.78, z = 2.0, is_precision_hard = False, tasks = []),
+            Mission(x = 6.0, y = 9.91, z = 1.0, is_precision_hard = True, tasks = []),
+            Mission(x = 6.0, y = 8.05, z = 1.0, is_precision_hard = True, tasks = [Task.YAW0]),
+            Mission(x = 1.85, y = 8.02, z = 2.25, is_precision_hard = True, tasks = []),
+            Mission(x = 1.85, y = 5.05, z = 2.25, is_precision_hard = True, tasks = [Task.LAND, Task.TAKEOFF]),
             Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = []),
         ]
+
+        # self.target_positions = [
+        #     Mission(x = self.global_start_pos_of_dron[0], y = self.global_start_pos_of_dron[1], z = 2.00, is_precision_hard = False, tasks = [Task.LAND, Task.TAKEOFF]),
+        # ]
 
         self.trajectory = self._get_trajectory(self.global_start_pos_of_dron, self.target_positions[0])
 
@@ -116,7 +132,7 @@ class DroneControl(Node):
         
         self.is_performing_task = False
         if self.index_of_trajectory_target_position  == len(self.trajectory) - 1 and self.target_positions[self.index_of_target_position].tasks:
-            self.precision = self.precision_soft
+            self.precision = 0.2
             self.is_performing_task = True
             task = self.target_positions[self.index_of_target_position].tasks[0]
             self._perform_task(task, x, y, z, orientation)
@@ -132,7 +148,7 @@ class DroneControl(Node):
                 
 
         elif self.index_of_target_position + 1 < len(self.target_positions):
-            # input("Pre pokracovanie na dalsiu poziciu stlac ENTER!")
+            input("Pre pokracovanie na dalsiu poziciu stlac ENTER!")
         
             self.index_of_target_position += 1
             self.trajectory = self._get_trajectory(self._get_global_pos((x,y)), self.target_positions[self.index_of_target_position])
@@ -278,6 +294,9 @@ class DroneControl(Node):
         #     threshold = self.precision_soft
 
         current_x, current_y, current_z = current_local_pos.position.x, current_local_pos.position.y, current_local_pos.position.z
+        if current_z < 0:
+            current_z = 0.0
+
         target_x, target_y, target_z = target_position.position.x, target_position.position.y, target_position.position.z 
         
         distance = self._euclidean_distance(current_x, current_y, current_z, target_x, target_y, target_z)
@@ -367,7 +386,7 @@ class DroneControl(Node):
         takeoff_req = CommandTOL.Request()
         takeoff_req.min_pitch = 0.0
         takeoff_req.yaw = 90.0
-        takeoff_req.altitude = 1.0
+        takeoff_req.altitude = 2.0
 
         # Service call
         response = self.takeoff_client.call_async(takeoff_req)
