@@ -20,7 +20,7 @@ source install/local_setup.bash
 ros2 run lrs dron
 ```
 
-# How to run following tasks from terminal
+### How to run following tasks from terminal
 1. Stop dron movement:
 ```
 ros2 service call /stop_dron tutorial_interfaces/srv/StopDron "{}"
