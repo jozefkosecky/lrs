@@ -10,6 +10,7 @@ import math
 import time
 from bfs_algorithm.maps import Maps
 from bfs_algorithm.bfs import BFS
+from bfs_algorithm.rrt import RRT
 from mission import Mission, Task
 import bisect
 import numpy as np
@@ -19,10 +20,10 @@ from mavros_msgs.msg import PositionTarget
 
 
 class DroneControl(Node):
-    def __init__(self, maps, bfs_algo):
+    def __init__(self, maps, find_path_algo):
         super().__init__('drone_control_node')
         self.maps = maps
-        self.bfs_algo = bfs_algo
+        self.find_path_algo = find_path_algo
         self.pixels_distance = 0.05
         self.precision_hard = 0.05;
         self.precision_soft = 0.10;
@@ -247,7 +248,7 @@ class DroneControl(Node):
         end_pos_in_pixels = self._get_global_pos_in_pixels([x_end, y_end])
         map = self.maps[str(z_altitude)]
 
-        path = self.bfs_algo.get_trajectory(start_pos_in_pixels, end_pos_in_pixels, map)
+        path = self.find_path_algo.get_trajectory(start_pos_in_pixels, end_pos_in_pixels, map)
 
         
         return [
@@ -471,8 +472,8 @@ class DroneControl(Node):
 def main(args=None):
     rclpy.init(args=args)
     maps = Maps()
-    bfs_algo = BFS()
-    drone_control = DroneControl(maps.maps, bfs_algo)
+    find_path_algo = RRT()
+    drone_control = DroneControl(maps.maps, find_path_algo)
     # Start the periodic_check method in a separate thread
     # thread = threading.Thread(target=drone_control.periodic_check)
     # thread.start()
