@@ -2,7 +2,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from geometry_msgs.msg import PoseStamped, Point, Quaternion, Pose
+from geometry_msgs.msg import PoseStamped, Point, Quaternion, Pose, TwistStamped
 from std_msgs.msg import Header
 from mavros_msgs.msg import State
 from mavros_msgs.srv import CommandBool, SetMode, CommandTOL
@@ -17,7 +17,7 @@ import numpy as np
 import threading
 from rclpy.executors import SingleThreadedExecutor
 from mavros_msgs.msg import PositionTarget
-
+from tutorial_interfaces.srv import StopDron, ResumeDron
 
 class DroneControl(Node):
     def __init__(self, maps, find_path_algo):
@@ -105,8 +105,7 @@ class DroneControl(Node):
         self.land_client = self.create_client(CommandTOL, 'mavros/cmd/land')
 
         self.position_target_pub = self.create_publisher(PoseStamped, 'mavros/setpoint_position/local', 10)
-        self.land_target_pub = self.create_publisher(PoseStamped, 'mavros/landing_target/pose', 10)
-        self.position_raw_target_pub = self.create_publisher(PositionTarget, '/mavros/setpoint_raw/local', 10)
+        self.velocity_publisher = self.create_publisher(TwistStamped, '/mavros/setpoint_velocity/cmd_vel', 10)
 
         qos_profile = QoSProfile(depth=1)
         qos_profile.reliability = ReliabilityPolicy.BEST_EFFORT
@@ -114,9 +113,42 @@ class DroneControl(Node):
 
         
         self._takeoff_dron()
+        self.stop_dron_service = self.create_service(StopDron, 'stop_dron', self.stop_dron_callback)    
+        self.resume_dron_service = self.create_service(ResumeDron, 'resume_dron', self.resume_dron_callback)    
+        self.isStopDron = False
+        
+
+    def stop_dron(self):
+        stop_msg = TwistStamped()
+        stop_msg.header = Header()
+        stop_msg.header.stamp = self.get_clock().now().to_msg()
+        stop_msg.header.frame_id = "base_link"  # or any appropriate frame_id
+        stop_msg.twist.linear.x = 0.0
+        stop_msg.twist.linear.y = 0.0
+        stop_msg.twist.linear.z = 0.0
+        stop_msg.twist.angular.x = 0.0
+        stop_msg.twist.angular.y = 0.0
+        stop_msg.twist.angular.z = 0.0
+
+        self.velocity_publisher.publish(stop_msg)
+
+    def stop_dron_callback(self, request, response):
+        self.stop_dron()
+        self.isStopDron = True
+        response.success = True                                                  # CHANGE
+        return response
+    
+    def resume_dron_callback(self, request, response):
+        self._publish_position_target(self.trajectory[self.index_of_trajectory_target_position])
+        self.isStopDron = False
+        response.success = True                                                  # CHANGE
+        return response
 
 
     def main_loop(self):
+        if self.isStopDron:
+            return
+        
         x = self.current_local_pos.position.x
         y = self.current_local_pos.position.y
         z = self.current_local_pos.position.z
@@ -149,7 +181,7 @@ class DroneControl(Node):
                 
 
         elif self.index_of_target_position + 1 < len(self.target_positions):
-            input("Pre pokracovanie na dalsiu poziciu stlac ENTER!")
+            # input("Pre pokracovanie na dalsiu poziciu stlac ENTER!")
         
             self.index_of_target_position += 1
             self.trajectory = self._get_trajectory(self._get_global_pos((x,y)), self.target_positions[self.index_of_target_position])
