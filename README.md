@@ -29,3 +29,8 @@ ros2 service call /stop_dron tutorial_interfaces/srv/StopDron "{}"
 ```
 ros2 service call /resume_dron tutorial_interfaces/srv/ResumeDron "{}"
 ```   
+3. Make circle:
+```
+ros2 service call /make_circle tutorial_interfaces/srv/MakeCircle "{radius: 1.0, distance: 0.5}"
+```  
+

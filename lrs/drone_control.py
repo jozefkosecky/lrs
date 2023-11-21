@@ -17,10 +17,10 @@ import numpy as np
 import threading
 from rclpy.executors import SingleThreadedExecutor
 from mavros_msgs.msg import PositionTarget
-from tutorial_interfaces.srv import StopDron, ResumeDron
+from tutorial_interfaces.srv import StopDron, ResumeDron, MakeCircle
 
 class DroneControl(Node):
-    def __init__(self, maps, find_path_algo):
+    def __init__(self, maps, find_path_algo, context):
         super().__init__('drone_control_node')
         self.maps = maps
         self.find_path_algo = find_path_algo
@@ -115,7 +115,11 @@ class DroneControl(Node):
         self._takeoff_dron()
         self.stop_dron_service = self.create_service(StopDron, 'stop_dron', self.stop_dron_callback)    
         self.resume_dron_service = self.create_service(ResumeDron, 'resume_dron', self.resume_dron_callback)    
+        self.make_circle_service = self.create_service(MakeCircle, 'make_circle', self.make_circle_callback)    
         self.isStopDron = False
+        self.isMakeCircle = False
+        self.waypoints = []
+        self.waypoints_index = 0
         
 
     def stop_dron(self):
@@ -131,22 +135,79 @@ class DroneControl(Node):
         stop_msg.twist.angular.z = 0.0
 
         self.velocity_publisher.publish(stop_msg)
+        self.isStopDron = True
 
     def stop_dron_callback(self, request, response):
         self.stop_dron()
-        self.isStopDron = True
         response.success = True                                                  # CHANGE
         return response
     
-    def resume_dron_callback(self, request, response):
+    def resume_dron(self):
         self._publish_position_target(self.trajectory[self.index_of_trajectory_target_position])
         self.isStopDron = False
+
+    def resume_dron_callback(self, request, response):
+        self.resume_dron()
         response.success = True                                                  # CHANGE
         return response
 
+    def make_circle_callback(self, request, response):
+        if self.isMakeCircle:
+            response.success = False                                                  # CHANGE
+            return response 
+        
+        if not self.isStopDron:
+            self.stop_dron()
+            
+        radius = request.radius
+        max_arc_length = request.distance
+
+        x = self.current_local_pos.position.x
+        y = self.current_local_pos.position.y
+        z = self.current_local_pos.position.z
+
+        self.waypoints = self.calculate_circle_waypoints([x,y,z], radius, max_arc_length)
+
+        self.isMakeCircle = True
+
+        # rclpy.spin_once(self, timeout_sec=0, executor=self.context)
+
+        # self.resume_dron()
+        response.success = True                                                  # CHANGE
+        return response
+    
+    def calculate_circle_waypoints(self, center, radius, max_arc_length = 0.3):
+        waypoints = []
+        n_points = self.calculate_n_points(radius, max_arc_length)
+        for i in range(n_points):
+            angle = 2 * math.pi * i / n_points
+            dx = radius * math.cos(angle)
+            dy = radius * math.sin(angle)
+            waypoint = (center[0] + dx, center[1] + dy, center[2]) 
+            waypoints.append(waypoint)
+        return waypoints
+
+    def calculate_n_points(self, radius, max_arc_length):
+        circumference = 2 * math.pi * radius
+        n_points = circumference / max_arc_length
+        return int(round(n_points))  
 
     def main_loop(self):
         if self.isStopDron:
+            if self.isMakeCircle:
+                waypoint = self.waypoints[self.waypoints_index]
+                target = Pose(position = Point(x=waypoint[0],y=waypoint[1],z=waypoint[2]), orientation =  self.current_local_pos.orientation)
+                self._publish_position_target(target)
+
+                is_drone_at_target_position, distance = self._check_position(self.current_local_pos, target, 0.1)
+
+                if is_drone_at_target_position:
+                    self.waypoints_index += 1
+
+                    if self.waypoints_index == len(self.waypoints):
+                        self.waypoints_index = 0
+                        self.isMakeCircle = False
+                        # self.resume_dron()
             return
         
         x = self.current_local_pos.position.x
@@ -452,7 +513,7 @@ class DroneControl(Node):
 
     def _publish_position_target(self, position):
         # self._set_mode()
-        self.print_msg_to_console(f'Current Local Position: \n x: {position.position.x}, \n y: {position.position.y}, \n z: {position.position.z}')
+        self.print_msg_to_console(f'Target Position: \n x: {position.position.x}, \n y: {position.position.y}, \n z: {position.position.z}')
 
         move_to_pose = PoseStamped()
         move_to_pose.header=Header(stamp=self.get_clock().now().to_msg(), frame_id='base')
@@ -503,9 +564,11 @@ class DroneControl(Node):
 
 def main(args=None):
     rclpy.init(args=args)
+    # context = rclpy.get_global_executor_context()
+    context = 1
     maps = Maps()
     find_path_algo = RRT()
-    drone_control = DroneControl(maps.maps, find_path_algo)
+    drone_control = DroneControl(maps.maps, find_path_algo, context)
     # Start the periodic_check method in a separate thread
     # thread = threading.Thread(target=drone_control.periodic_check)
     # thread.start()
